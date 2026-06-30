@@ -1,0 +1,7 @@
+node_modules/
+*.env
+.env.local
+*.log
+
+# Manter dist/ no repo para permitir npx github:user/repo sem build local
+# dist/
