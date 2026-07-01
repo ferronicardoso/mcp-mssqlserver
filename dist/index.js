@@ -3,31 +3,91 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, } from '@modelcontextprotocol/sdk/types.js';
 import sql from 'mssql';
-// ---------------------------------------------------------------------------
-// Configuração via variáveis de ambiente
-// ---------------------------------------------------------------------------
-const dbConfig = {
-    server: process.env.MSSQL_HOST ?? 'localhost',
-    port: parseInt(process.env.MSSQL_PORT ?? '1433'),
-    database: process.env.MSSQL_DATABASE,
-    user: process.env.MSSQL_USER,
-    password: process.env.MSSQL_PASSWORD,
-    options: {
-        encrypt: process.env.MSSQL_ENCRYPT === 'true',
-        trustServerCertificate: process.env.MSSQL_TRUST_SERVER_CERTIFICATE !== 'false',
-    },
-    pool: {
-        max: 5,
-        min: 0,
-        idleTimeoutMillis: 30000,
-    },
-};
-let pool = null;
-async function getPool() {
-    if (!pool || !pool.connected) {
-        pool = await new sql.ConnectionPool(dbConfig).connect();
+import { inspect } from 'node:util';
+function requireEnv(name) {
+    const value = process.env[name];
+    if (!value) {
+        throw new Error(`Variável de ambiente obrigatória não definida: ${name}`);
     }
-    return pool;
+    return value;
+}
+function parsePort(value) {
+    const port = parseInt(value, 10);
+    if (Number.isNaN(port)) {
+        throw new Error(`Valor inválido para MSSQL_PORT: ${value}`);
+    }
+    return port;
+}
+function getAuthMode() {
+    const rawMode = (process.env.MSSQL_AUTH_MODE ?? 'sql').toLowerCase();
+    if (rawMode === 'sql' || rawMode === 'windows') {
+        return rawMode;
+    }
+    throw new Error(`Valor inválido para MSSQL_AUTH_MODE: ${rawMode}. Valores aceitos: sql, windows`);
+}
+async function getSqlClient(authMode) {
+    if (authMode === 'windows') {
+        const module = (await import('mssql/msnodesqlv8.js'));
+        return module.default ?? module;
+    }
+    return sql;
+}
+function createDbConfig(authMode) {
+    const encrypt = process.env.MSSQL_ENCRYPT === 'true';
+    const trustServerCertificate = process.env.MSSQL_TRUST_SERVER_CERTIFICATE !== 'false';
+    const host = process.env.MSSQL_HOST ?? 'localhost';
+    const port = parsePort(process.env.MSSQL_PORT ?? '1433');
+    const database = requireEnv('MSSQL_DATABASE');
+    const config = {
+        server: host,
+        port,
+        database,
+        options: {
+            encrypt,
+            trustServerCertificate,
+        },
+        pool: {
+            max: 5,
+            min: 0,
+            idleTimeoutMillis: 30000,
+        },
+    };
+    if (authMode === 'windows') {
+        config.driver = 'msnodesqlv8';
+        config.connectionString = `Driver={ODBC Driver 18 for SQL Server};Server=${host},${port};Database=${database};Trusted_Connection=yes;Encrypt=${encrypt ? 'yes' : 'no'};TrustServerCertificate=${trustServerCertificate ? 'yes' : 'no'};`;
+    }
+    else {
+        config.user = requireEnv('MSSQL_USER');
+        config.password = requireEnv('MSSQL_PASSWORD');
+    }
+    return config;
+}
+const authMode = getAuthMode();
+let sqlClient = null;
+const dbConfig = createDbConfig(authMode);
+let pool = null;
+function formatError(error) {
+    if (error instanceof Error) {
+        return error.message;
+    }
+    if (typeof error === 'string') {
+        return error;
+    }
+    try {
+        return JSON.stringify(error, null, 2);
+    }
+    catch {
+        return inspect(error, { depth: 6, breakLength: 120 });
+    }
+}
+async function getDbContext() {
+    if (!sqlClient) {
+        sqlClient = await getSqlClient(authMode);
+    }
+    if (!pool || !pool.connected) {
+        pool = await new sqlClient.ConnectionPool(dbConfig).connect();
+    }
+    return { pool, client: sqlClient };
 }
 // ---------------------------------------------------------------------------
 // Servidor MCP
@@ -135,7 +195,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     try {
-        const pool = await getPool();
+        const db = await getDbContext();
+        const pool = db.pool;
+        const client = db.client;
         switch (name) {
             case 'execute_query': {
                 const query = args?.query;
@@ -153,7 +215,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           FROM INFORMATION_SCHEMA.TABLES
         `;
                 if (schema) {
-                    request.input('schema', sql.NVarChar, schema);
+                    request.input('schema', client.NVarChar, schema);
                     query += ' WHERE TABLE_SCHEMA = @schema';
                 }
                 query += ' ORDER BY TABLE_SCHEMA, TABLE_NAME';
@@ -165,8 +227,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const schema = args?.schema ?? 'dbo';
                 const result = await pool
                     .request()
-                    .input('schema', sql.NVarChar, schema)
-                    .input('table', sql.NVarChar, table).query(`
+                    .input('schema', client.NVarChar, schema)
+                    .input('table', client.NVarChar, table).query(`
             SELECT
               c.COLUMN_NAME,
               c.DATA_TYPE,
@@ -202,8 +264,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const schema = args?.schema ?? 'dbo';
                 const result = await pool
                     .request()
-                    .input('schema', sql.NVarChar, schema)
-                    .input('table', sql.NVarChar, table).query(`
+                    .input('schema', client.NVarChar, schema)
+                    .input('table', client.NVarChar, table).query(`
             SELECT
               i.name AS INDEX_NAME,
               i.type_desc AS INDEX_TYPE,
@@ -226,8 +288,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const schema = args?.schema ?? 'dbo';
                 const result = await pool
                     .request()
-                    .input('schema', sql.NVarChar, schema)
-                    .input('table', sql.NVarChar, table).query(`
+                    .input('schema', client.NVarChar, schema)
+                    .input('table', client.NVarChar, table).query(`
             SELECT
               fk.name AS FK_NAME,
               COL_NAME(fkc.parent_object_id, fkc.parent_column_id) AS COLUMN_NAME,
@@ -253,8 +315,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
     }
     catch (error) {
+        console.error('Tool execution error:', inspect(error, { depth: 8, breakLength: 120 }));
         return {
-            content: [{ type: 'text', text: `Erro: ${error.message}` }],
+            content: [{ type: 'text', text: `Erro: ${formatError(error)}` }],
             isError: true,
         };
     }

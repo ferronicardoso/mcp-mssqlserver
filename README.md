@@ -33,13 +33,16 @@ Set connection settings using environment variables:
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `MSSQL_HOST` | Yes | `localhost` | SQL Server host or IP |
+| `MSSQL_HOST` | No | `localhost` | SQL Server host or IP |
 | `MSSQL_PORT` | No | `1433` | SQL Server TCP port |
 | `MSSQL_DATABASE` | Yes | — | Default database |
-| `MSSQL_USER` | Yes | — | SQL login user |
-| `MSSQL_PASSWORD` | Yes | — | SQL login password |
+| `MSSQL_AUTH_MODE` | No | `sql` | Authentication mode: `sql` or `windows` |
+| `MSSQL_USER` | Yes\* | — | SQL login user (required only in `sql`) |
+| `MSSQL_PASSWORD` | Yes\* | — | SQL login password (required only in `sql`) |
 | `MSSQL_ENCRYPT` | No | `false` | Enables encrypted connection |
 | `MSSQL_TRUST_SERVER_CERTIFICATE` | No | `true` | Trusts server certificate when encryption is enabled |
+
+\* Required when `MSSQL_AUTH_MODE=sql`.
 
 ## Usage
 
@@ -63,6 +66,7 @@ npx github:ferronicardoso/mcp-mssqlserver
         "MSSQL_HOST": "localhost",
         "MSSQL_PORT": "1433",
         "MSSQL_DATABASE": "master",
+        "MSSQL_AUTH_MODE": "sql",
         "MSSQL_USER": "sa",
         "MSSQL_PASSWORD": "your-password"
       }
@@ -85,6 +89,7 @@ npx github:ferronicardoso/mcp-mssqlserver
         "MSSQL_HOST": "localhost",
         "MSSQL_PORT": "1433",
         "MSSQL_DATABASE": "master",
+        "MSSQL_AUTH_MODE": "sql",
         "MSSQL_USER": "sa",
         "MSSQL_PASSWORD": "your-password"
       }
@@ -128,3 +133,14 @@ git add dist
 - Never commit real credentials or `.env` files.
 - Prefer least-privilege SQL users for production use.
 - For public or untrusted networks, enable encryption (`MSSQL_ENCRYPT=true`) and configure certificates appropriately.
+
+## Windows Authentication (Integrated Security)
+
+To use Windows Authentication with Integrated Security (process account), configure:
+
+```bash
+MSSQL_AUTH_MODE=windows
+MSSQL_HOST=sqlserver.company.local
+MSSQL_PORT=1433
+MSSQL_DATABASE=master
+```
