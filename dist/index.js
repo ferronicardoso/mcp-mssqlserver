@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, } from '@modelcontextprotocol/sdk/types.js';
 import sql from 'mssql';
 import { inspect } from 'node:util';
@@ -92,143 +94,144 @@ async function getDbContext() {
 // ---------------------------------------------------------------------------
 // Servidor MCP
 // ---------------------------------------------------------------------------
-const server = new Server({ name: 'mcp-mssqlserver', version: '1.0.0' }, { capabilities: { tools: {} } });
-// ---------------------------------------------------------------------------
-// Definição das ferramentas
-// ---------------------------------------------------------------------------
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
-        {
-            name: 'execute_query',
-            description: 'Executa uma query SQL no SQL Server e retorna os resultados. Use para SELECT, INSERT, UPDATE e DELETE.',
-            inputSchema: {
-                type: 'object',
-                properties: {
-                    query: {
-                        type: 'string',
-                        description: 'A query SQL a ser executada',
+function createServer() {
+    const server = new Server({ name: 'mcp-mssqlserver', version: '1.0.0' }, { capabilities: { tools: {} } });
+    // ---------------------------------------------------------------------------
+    // Definição das ferramentas
+    // ---------------------------------------------------------------------------
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+        tools: [
+            {
+                name: 'execute_query',
+                description: 'Executa uma query SQL no SQL Server e retorna os resultados. Use para SELECT, INSERT, UPDATE e DELETE.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        query: {
+                            type: 'string',
+                            description: 'A query SQL a ser executada',
+                        },
                     },
-                },
-                required: ['query'],
-            },
-        },
-        {
-            name: 'list_tables',
-            description: 'Lista todas as tabelas do banco de dados atual, opcionalmente filtrando por schema.',
-            inputSchema: {
-                type: 'object',
-                properties: {
-                    schema: {
-                        type: 'string',
-                        description: 'Schema a filtrar (padrão: todos os schemas)',
-                    },
+                    required: ['query'],
                 },
             },
-        },
-        {
-            name: 'describe_table',
-            description: 'Retorna a estrutura de uma tabela: colunas, tipos de dados, nulabilidade e valores padrão.',
-            inputSchema: {
-                type: 'object',
-                properties: {
-                    table: {
-                        type: 'string',
-                        description: 'Nome da tabela',
-                    },
-                    schema: {
-                        type: 'string',
-                        description: 'Schema da tabela (padrão: dbo)',
+            {
+                name: 'list_tables',
+                description: 'Lista todas as tabelas do banco de dados atual, opcionalmente filtrando por schema.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        schema: {
+                            type: 'string',
+                            description: 'Schema a filtrar (padrão: todos os schemas)',
+                        },
                     },
                 },
-                required: ['table'],
             },
-        },
-        {
-            name: 'list_databases',
-            description: 'Lista todos os bancos de dados disponíveis no servidor SQL Server.',
-            inputSchema: {
-                type: 'object',
-                properties: {},
-            },
-        },
-        {
-            name: 'get_table_indexes',
-            description: 'Lista os índices de uma tabela, incluindo colunas e tipo de índice.',
-            inputSchema: {
-                type: 'object',
-                properties: {
-                    table: {
-                        type: 'string',
-                        description: 'Nome da tabela',
+            {
+                name: 'describe_table',
+                description: 'Retorna a estrutura de uma tabela: colunas, tipos de dados, nulabilidade e valores padrão.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        table: {
+                            type: 'string',
+                            description: 'Nome da tabela',
+                        },
+                        schema: {
+                            type: 'string',
+                            description: 'Schema da tabela (padrão: dbo)',
+                        },
                     },
-                    schema: {
-                        type: 'string',
-                        description: 'Schema da tabela (padrão: dbo)',
-                    },
+                    required: ['table'],
                 },
-                required: ['table'],
             },
-        },
-        {
-            name: 'get_foreign_keys',
-            description: 'Lista as chaves estrangeiras de uma tabela e suas referências.',
-            inputSchema: {
-                type: 'object',
-                properties: {
-                    table: {
-                        type: 'string',
-                        description: 'Nome da tabela',
-                    },
-                    schema: {
-                        type: 'string',
-                        description: 'Schema da tabela (padrão: dbo)',
-                    },
+            {
+                name: 'list_databases',
+                description: 'Lista todos os bancos de dados disponíveis no servidor SQL Server.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {},
                 },
-                required: ['table'],
             },
-        },
-    ],
-}));
-// ---------------------------------------------------------------------------
-// Implementação das ferramentas
-// ---------------------------------------------------------------------------
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params;
-    try {
-        const db = await getDbContext();
-        const pool = db.pool;
-        const client = db.client;
-        switch (name) {
-            case 'execute_query': {
-                const query = args?.query;
-                const result = await pool.request().query(query);
-                const output = result.recordset?.length > 0
-                    ? JSON.stringify(result.recordset, null, 2)
-                    : `Consulta executada com sucesso. Linhas afetadas: ${result.rowsAffected?.[0] ?? 0}`;
-                return { content: [{ type: 'text', text: output }] };
-            }
-            case 'list_tables': {
-                const schema = args?.schema;
-                const request = pool.request();
-                let query = `
+            {
+                name: 'get_table_indexes',
+                description: 'Lista os índices de uma tabela, incluindo colunas e tipo de índice.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        table: {
+                            type: 'string',
+                            description: 'Nome da tabela',
+                        },
+                        schema: {
+                            type: 'string',
+                            description: 'Schema da tabela (padrão: dbo)',
+                        },
+                    },
+                    required: ['table'],
+                },
+            },
+            {
+                name: 'get_foreign_keys',
+                description: 'Lista as chaves estrangeiras de uma tabela e suas referências.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        table: {
+                            type: 'string',
+                            description: 'Nome da tabela',
+                        },
+                        schema: {
+                            type: 'string',
+                            description: 'Schema da tabela (padrão: dbo)',
+                        },
+                    },
+                    required: ['table'],
+                },
+            },
+        ],
+    }));
+    // ---------------------------------------------------------------------------
+    // Implementação das ferramentas
+    // ---------------------------------------------------------------------------
+    server.setRequestHandler(CallToolRequestSchema, async (request) => {
+        const { name, arguments: args } = request.params;
+        try {
+            const db = await getDbContext();
+            const pool = db.pool;
+            const client = db.client;
+            switch (name) {
+                case 'execute_query': {
+                    const query = args?.query;
+                    const result = await pool.request().query(query);
+                    const output = result.recordset?.length > 0
+                        ? JSON.stringify(result.recordset, null, 2)
+                        : `Consulta executada com sucesso. Linhas afetadas: ${result.rowsAffected?.[0] ?? 0}`;
+                    return { content: [{ type: 'text', text: output }] };
+                }
+                case 'list_tables': {
+                    const schema = args?.schema;
+                    const request = pool.request();
+                    let query = `
           SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE
           FROM INFORMATION_SCHEMA.TABLES
         `;
-                if (schema) {
-                    request.input('schema', client.NVarChar, schema);
-                    query += ' WHERE TABLE_SCHEMA = @schema';
+                    if (schema) {
+                        request.input('schema', client.NVarChar, schema);
+                        query += ' WHERE TABLE_SCHEMA = @schema';
+                    }
+                    query += ' ORDER BY TABLE_SCHEMA, TABLE_NAME';
+                    const result = await request.query(query);
+                    return { content: [{ type: 'text', text: JSON.stringify(result.recordset, null, 2) }] };
                 }
-                query += ' ORDER BY TABLE_SCHEMA, TABLE_NAME';
-                const result = await request.query(query);
-                return { content: [{ type: 'text', text: JSON.stringify(result.recordset, null, 2) }] };
-            }
-            case 'describe_table': {
-                const table = args?.table;
-                const schema = args?.schema ?? 'dbo';
-                const result = await pool
-                    .request()
-                    .input('schema', client.NVarChar, schema)
-                    .input('table', client.NVarChar, table).query(`
+                case 'describe_table': {
+                    const table = args?.table;
+                    const schema = args?.schema ?? 'dbo';
+                    const result = await pool
+                        .request()
+                        .input('schema', client.NVarChar, schema)
+                        .input('table', client.NVarChar, table).query(`
             SELECT
               c.COLUMN_NAME,
               c.DATA_TYPE,
@@ -251,21 +254,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             WHERE c.TABLE_SCHEMA = @schema AND c.TABLE_NAME = @table
             ORDER BY c.ORDINAL_POSITION
           `);
-                return { content: [{ type: 'text', text: JSON.stringify(result.recordset, null, 2) }] };
-            }
-            case 'list_databases': {
-                const result = await pool
-                    .request()
-                    .query('SELECT name, create_date, state_desc FROM sys.databases ORDER BY name');
-                return { content: [{ type: 'text', text: JSON.stringify(result.recordset, null, 2) }] };
-            }
-            case 'get_table_indexes': {
-                const table = args?.table;
-                const schema = args?.schema ?? 'dbo';
-                const result = await pool
-                    .request()
-                    .input('schema', client.NVarChar, schema)
-                    .input('table', client.NVarChar, table).query(`
+                    return { content: [{ type: 'text', text: JSON.stringify(result.recordset, null, 2) }] };
+                }
+                case 'list_databases': {
+                    const result = await pool
+                        .request()
+                        .query('SELECT name, create_date, state_desc FROM sys.databases ORDER BY name');
+                    return { content: [{ type: 'text', text: JSON.stringify(result.recordset, null, 2) }] };
+                }
+                case 'get_table_indexes': {
+                    const table = args?.table;
+                    const schema = args?.schema ?? 'dbo';
+                    const result = await pool
+                        .request()
+                        .input('schema', client.NVarChar, schema)
+                        .input('table', client.NVarChar, table).query(`
             SELECT
               i.name AS INDEX_NAME,
               i.type_desc AS INDEX_TYPE,
@@ -281,15 +284,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             GROUP BY i.name, i.type_desc, i.is_unique, i.is_primary_key
             ORDER BY i.is_primary_key DESC, i.name
           `);
-                return { content: [{ type: 'text', text: JSON.stringify(result.recordset, null, 2) }] };
-            }
-            case 'get_foreign_keys': {
-                const table = args?.table;
-                const schema = args?.schema ?? 'dbo';
-                const result = await pool
-                    .request()
-                    .input('schema', client.NVarChar, schema)
-                    .input('table', client.NVarChar, table).query(`
+                    return { content: [{ type: 'text', text: JSON.stringify(result.recordset, null, 2) }] };
+                }
+                case 'get_foreign_keys': {
+                    const table = args?.table;
+                    const schema = args?.schema ?? 'dbo';
+                    const result = await pool
+                        .request()
+                        .input('schema', client.NVarChar, schema)
+                        .input('table', client.NVarChar, table).query(`
             SELECT
               fk.name AS FK_NAME,
               COL_NAME(fkc.parent_object_id, fkc.parent_column_id) AS COLUMN_NAME,
@@ -305,29 +308,77 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             WHERE s.name = @schema AND t.name = @table
             ORDER BY fk.name
           `);
-                return { content: [{ type: 'text', text: JSON.stringify(result.recordset, null, 2) }] };
+                    return { content: [{ type: 'text', text: JSON.stringify(result.recordset, null, 2) }] };
+                }
+                default:
+                    return {
+                        content: [{ type: 'text', text: `Ferramenta desconhecida: ${name}` }],
+                        isError: true,
+                    };
             }
-            default:
-                return {
-                    content: [{ type: 'text', text: `Ferramenta desconhecida: ${name}` }],
-                    isError: true,
-                };
         }
-    }
-    catch (error) {
-        console.error('Tool execution error:', inspect(error, { depth: 8, breakLength: 120 }));
-        return {
-            content: [{ type: 'text', text: `Erro: ${formatError(error)}` }],
-            isError: true,
-        };
-    }
-});
+        catch (error) {
+            console.error('Tool execution error:', inspect(error, { depth: 8, breakLength: 120 }));
+            return {
+                content: [{ type: 'text', text: `Erro: ${formatError(error)}` }],
+                isError: true,
+            };
+        }
+    });
+    return server;
+}
 // ---------------------------------------------------------------------------
 // Inicialização
 // ---------------------------------------------------------------------------
+const MCP_TRANSPORT = (process.env.MCP_TRANSPORT ?? 'stdio').toLowerCase();
+async function startHttpServer() {
+    const port = Number.parseInt(process.env.MCP_HTTP_PORT ?? '3001', 10);
+    const host = process.env.MCP_HTTP_HOST ?? '0.0.0.0';
+    const app = createMcpExpressApp({ host });
+    app.post('/mcp', async (req, res) => {
+        const server = createServer();
+        try {
+            const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+            await server.connect(transport);
+            await transport.handleRequest(req, res, req.body);
+            res.on('close', () => {
+                transport.close();
+                server.close();
+            });
+        }
+        catch (error) {
+            console.error('Error handling MCP request:', error);
+            if (!res.headersSent) {
+                res.status(500).json({
+                    jsonrpc: '2.0',
+                    error: { code: -32603, message: 'Internal server error' },
+                    id: null,
+                });
+            }
+        }
+    });
+    const methodNotAllowedBody = JSON.stringify({
+        jsonrpc: '2.0',
+        error: { code: -32000, message: 'Method not allowed.' },
+        id: null,
+    });
+    app.get('/mcp', (_req, res) => {
+        res.writeHead(405).end(methodNotAllowedBody);
+    });
+    app.delete('/mcp', (_req, res) => {
+        res.writeHead(405).end(methodNotAllowedBody);
+    });
+    app.listen(port, host, () => {
+        console.error(`mcp-mssqlserver: MCP HTTP server listening on http://${host}:${port}/mcp`);
+    });
+}
 async function main() {
+    if (MCP_TRANSPORT === 'http') {
+        await startHttpServer();
+        return;
+    }
     const transport = new StdioServerTransport();
-    await server.connect(transport);
+    await createServer().connect(transport);
 }
 main().catch((err) => {
     console.error('Erro fatal:', err);

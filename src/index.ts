@@ -2,6 +2,9 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
+import type { Request, Response } from 'express';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -120,10 +123,11 @@ async function getDbContext(): Promise<{ pool: sql.ConnectionPool; client: SqlCl
 // ---------------------------------------------------------------------------
 // Servidor MCP
 // ---------------------------------------------------------------------------
-const server = new Server(
-  { name: 'mcp-mssqlserver', version: '1.0.0' },
-  { capabilities: { tools: {} } }
-);
+function createServer(): Server {
+  const server = new Server(
+    { name: 'mcp-mssqlserver', version: '1.0.0' },
+    { capabilities: { tools: {} } }
+  );
 
 // ---------------------------------------------------------------------------
 // Definição das ferramentas
@@ -366,12 +370,65 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
+  return server;
+}
+
 // ---------------------------------------------------------------------------
 // Inicialização
 // ---------------------------------------------------------------------------
+const MCP_TRANSPORT = (process.env.MCP_TRANSPORT ?? 'stdio').toLowerCase();
+
+async function startHttpServer() {
+  const port = Number.parseInt(process.env.MCP_HTTP_PORT ?? '3001', 10);
+  const host = process.env.MCP_HTTP_HOST ?? '0.0.0.0';
+  const app = createMcpExpressApp({ host });
+
+  app.post('/mcp', async (req: Request, res: Response) => {
+    const server = createServer();
+    try {
+      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+      await server.connect(transport);
+      await transport.handleRequest(req, res, req.body);
+      res.on('close', () => {
+        transport.close();
+        server.close();
+      });
+    } catch (error) {
+      console.error('Error handling MCP request:', error);
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: '2.0',
+          error: { code: -32603, message: 'Internal server error' },
+          id: null,
+        });
+      }
+    }
+  });
+
+  const methodNotAllowedBody = JSON.stringify({
+    jsonrpc: '2.0',
+    error: { code: -32000, message: 'Method not allowed.' },
+    id: null,
+  });
+  app.get('/mcp', (_req: Request, res: Response) => {
+    res.writeHead(405).end(methodNotAllowedBody);
+  });
+  app.delete('/mcp', (_req: Request, res: Response) => {
+    res.writeHead(405).end(methodNotAllowedBody);
+  });
+
+  app.listen(port, host, () => {
+    console.error(`mcp-mssqlserver: MCP HTTP server listening on http://${host}:${port}/mcp`);
+  });
+}
+
 async function main() {
+  if (MCP_TRANSPORT === 'http') {
+    await startHttpServer();
+    return;
+  }
   const transport = new StdioServerTransport();
-  await server.connect(transport);
+  await createServer().connect(transport);
 }
 
 main().catch((err) => {
