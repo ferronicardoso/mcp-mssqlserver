@@ -8,6 +8,7 @@ Production-oriented MCP server for Microsoft SQL Server, exposing database opera
 - Database discovery and schema introspection
 - Table metadata inspection (columns, types, nullability, defaults, PK)
 - Index and foreign key discovery
+- Estimated execution plan analysis (operators, costs, warnings, missing index suggestions) without executing the query
 - Environment-driven configuration for secure deployment
 
 ## Available Tools
@@ -20,6 +21,7 @@ Production-oriented MCP server for Microsoft SQL Server, exposing database opera
 | `list_databases` | Lists all SQL Server databases |
 | `get_table_indexes` | Lists table indexes, type, uniqueness, PK, and indexed columns |
 | `get_foreign_keys` | Lists table foreign keys and referenced targets |
+| `analyze_query_plan` | Returns the estimated execution plan analysis (operators, costs, warnings, missing indexes) without executing the query |
 
 ## Requirements
 
