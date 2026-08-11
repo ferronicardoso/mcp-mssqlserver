@@ -62,6 +62,33 @@ Set connection settings using environment variables:
 npx github:ferronicardoso/mcp-mssqlserver
 ```
 
+### Claude Code (CLI)
+
+```bash
+claude mcp add mssqlserver --scope user -- npx -y github:ferronicardoso/mcp-mssqlserver
+```
+
+`--scope` controls where the server registration is stored:
+
+| Scope | Stored in | Visible to |
+|---|---|---|
+| `local` (default) | project-local, untracked | only you, only in this project |
+| `project` | `.mcp.json` at the project root | anyone who clones the repo (commit it to share) |
+| `user` | your global Claude Code config | you, across every project |
+
+Environment variables can be passed with repeated `--env KEY=VALUE` flags before the `--`, e.g.:
+
+```bash
+claude mcp add mssqlserver --scope user \
+  --env MSSQL_HOST=localhost \
+  --env MSSQL_PORT=1433 \
+  --env MSSQL_DATABASE=master \
+  --env MSSQL_AUTH_MODE=sql \
+  --env MSSQL_USER=sa \
+  --env MSSQL_PASSWORD=your-password \
+  -- npx -y github:ferronicardoso/mcp-mssqlserver
+```
+
 ### Claude Desktop configuration
 
 `%APPDATA%\\Claude\\claude_desktop_config.json`:
