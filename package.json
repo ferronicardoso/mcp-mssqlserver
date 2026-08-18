@@ -2,6 +2,7 @@
   "name": "mcp-mssqlserver",
   "version": "1.0.0",
   "description": "MCP server para interação com SQL Server via linguagem natural",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "mcp-mssqlserver": "./dist/index.js"

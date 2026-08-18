@@ -1,4 +1,4 @@
-# mcp-mssqlserver
+# MCP Server for Microsoft SQL Server
 
 [![Docker Publish](https://github.com/ferronicardoso/mcp-mssqlserver/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/ferronicardoso/mcp-mssqlserver/actions/workflows/docker-publish.yml)
 [![GHCR](https://img.shields.io/badge/ghcr.io-mcp--mssqlserver-2496ED?logo=docker&logoColor=white)](https://github.com/ferronicardoso/mcp-mssqlserver/pkgs/container/mcp-mssqlserver)
@@ -78,6 +78,8 @@ claude mcp add mssqlserver --scope user -- npx -y github:ferronicardoso/mcp-mssq
 
 Environment variables can be passed with repeated `--env KEY=VALUE` flags before the `--`, e.g.:
 
+**Bash (Linux/macOS/WSL):**
+
 ```bash
 claude mcp add mssqlserver --scope user \
   --env MSSQL_HOST=localhost \
@@ -88,6 +90,73 @@ claude mcp add mssqlserver --scope user \
   --env MSSQL_PASSWORD=your-password \
   -- npx -y github:ferronicardoso/mcp-mssqlserver
 ```
+
+**PowerShell:**
+
+```powershell
+claude mcp add mssqlserver --scope user `
+  --env MSSQL_HOST=localhost `
+  --env MSSQL_PORT=1433 `
+  --env MSSQL_DATABASE=master `
+  --env MSSQL_AUTH_MODE=sql `
+  --env MSSQL_USER=sa `
+  --env MSSQL_PASSWORD=your-password `
+  -- npx -y github:ferronicardoso/mcp-mssqlserver
+```
+
+### Codex CLI
+
+**Bash (Linux/macOS/WSL):**
+
+```bash
+codex mcp add mssqlserver \
+  --env MSSQL_AUTH_MODE=sql \
+  --env MSSQL_HOST=localhost \
+  --env MSSQL_PORT=1433 \
+  --env MSSQL_DATABASE=master \
+  --env MSSQL_USER=sa \
+  --env MSSQL_PASSWORD=your-password \
+  npx -- -y github:ferronicardoso/mcp-mssqlserver
+```
+
+**PowerShell:**
+
+```powershell
+codex mcp add mssqlserver `
+  --env MSSQL_AUTH_MODE=sql `
+  --env MSSQL_HOST=localhost `
+  --env MSSQL_PORT=1433 `
+  --env MSSQL_DATABASE=master `
+  --env MSSQL_USER=sa `
+  --env MSSQL_PASSWORD=your-password `
+  npx -- -y github:ferronicardoso/mcp-mssqlserver
+```
+
+For Windows Authentication instead, drop `MSSQL_USER`/`MSSQL_PASSWORD` and set `MSSQL_AUTH_MODE=windows`:
+
+**Bash (Linux/macOS/WSL):**
+
+```bash
+codex mcp add mssqlserver \
+  --env MSSQL_AUTH_MODE=windows \
+  --env MSSQL_HOST=localhost \
+  --env MSSQL_PORT=1433 \
+  --env MSSQL_DATABASE=master \
+  npx -- -y github:ferronicardoso/mcp-mssqlserver
+```
+
+**PowerShell:**
+
+```powershell
+codex mcp add mssqlserver `
+  --env MSSQL_AUTH_MODE=windows `
+  --env MSSQL_HOST=localhost `
+  --env MSSQL_PORT=1433 `
+  --env MSSQL_DATABASE=master `
+  npx -- -y github:ferronicardoso/mcp-mssqlserver
+```
+
+This registers the server in `~/.codex/config.toml`. To remove it, run `codex mcp remove mssqlserver`.
 
 ### Claude Desktop configuration
 
@@ -139,6 +208,8 @@ claude mcp add mssqlserver --scope user \
 
 The published image runs in Streamable HTTP mode by default, for use as a remote MCP endpoint (e.g. from n8n's MCP Client Tool node or any Streamable HTTP-compatible client):
 
+**Bash (Linux/macOS/WSL):**
+
 ```bash
 docker run -d --name mcp-mssqlserver \
   -p 3001:3001 \
@@ -148,6 +219,20 @@ docker run -d --name mcp-mssqlserver \
   -e MSSQL_AUTH_MODE=sql \
   -e MSSQL_USER=sa \
   -e MSSQL_PASSWORD=your-password \
+  ghcr.io/ferronicardoso/mcp-mssqlserver:latest
+```
+
+**PowerShell:**
+
+```powershell
+docker run -d --name mcp-mssqlserver `
+  -p 3001:3001 `
+  -e MSSQL_HOST=host.docker.internal `
+  -e MSSQL_PORT=1433 `
+  -e MSSQL_DATABASE=master `
+  -e MSSQL_AUTH_MODE=sql `
+  -e MSSQL_USER=sa `
+  -e MSSQL_PASSWORD=your-password `
   ghcr.io/ferronicardoso/mcp-mssqlserver:latest
 ```
 
@@ -199,3 +284,7 @@ MSSQL_HOST=sqlserver.company.local
 MSSQL_PORT=1433
 MSSQL_DATABASE=master
 ```
+
+## License
+
+[MIT](LICENSE) © Raphael Augusto Ferroni Cardoso
