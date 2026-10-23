@@ -8,7 +8,7 @@ Production-oriented MCP server for Microsoft SQL Server, exposing database opera
 
 ## Features
 
-- Query execution (`SELECT`, `INSERT`, `UPDATE`, `DELETE`)
+- Query execution (`SELECT`, `INSERT`, `UPDATE`, `DELETE`), with an optional read-only mode (`MSSQL_READ_ONLY=true`)
 - Database discovery and schema introspection
 - Table metadata inspection (columns, types, nullability, defaults, PK)
 - Index and foreign key discovery
@@ -48,11 +48,26 @@ Set connection settings using environment variables:
 
 \* Required when `MSSQL_AUTH_MODE=sql`.
 
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `MSSQL_READ_ONLY` | No | `false` | Enables read-only mode (`true`/`false`; any other value fails at startup). See [Read-only mode](#read-only-mode) |
 | `MCP_TRANSPORT` | No | `stdio` | Transport mode: `stdio` (default, for `npx`/Claude Desktop/VS Code) or `http` (Streamable HTTP, for Docker/remote clients such as n8n) |
 | `MCP_HTTP_PORT` | No | `3001` | Port for the HTTP server (only used when `MCP_TRANSPORT=http`) |
 | `MCP_HTTP_HOST` | No | `0.0.0.0` | Bind address for the HTTP server (only used when `MCP_TRANSPORT=http`) |
 
 > Note: the published Docker image always runs in `http` mode and does not build the `msnodesqlv8` native driver (used only for `MSSQL_AUTH_MODE=windows`). Windows Authentication is only available when running the server directly on a Windows host via `npx`/`npm start`.
+
+## Read-only mode
+
+Set `MSSQL_READ_ONLY=true` to restrict `execute_query` to read operations. When enabled:
+
+- Only a single `SELECT` (or `WITH ... SELECT`) statement is accepted. Multiple statements, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `TRUNCATE`, DDL (`CREATE`/`ALTER`/`DROP`), `GRANT`/`REVOKE`/`DENY`, `EXEC`/`EXECUTE`, `SELECT ... INTO`, `OPENROWSET`/`OPENQUERY`/`OPENDATASOURCE`, and `xp_*`/`sp_*` procedures are rejected before reaching the database. Comments, string literals and delimited identifiers are ignored by the check.
+- The query runs inside a transaction that is always rolled back.
+- The connection is opened with `ApplicationIntent=ReadOnly`, which routes to a readable secondary replica when an Always On availability group with read-only routing is configured (it has no effect otherwise).
+- The `execute_query` tool description exposed to the MCP client states that the server is read-only.
+- The remaining tools (`list_tables`, `describe_table`, `list_databases`, `get_table_indexes`, `get_foreign_keys`) only read metadata and are unaffected.
+
+> **This mode is a defense-in-depth measure, not a security boundary.** The check is lexical and can reject legitimate queries that use a blocked word outside literals/identifiers (false positives), and T-SQL has enough syntax that bypasses cannot be fully ruled out. The effective guarantee must come from the database: use a login restricted to `db_datareader` (optionally with `DENY INSERT, UPDATE, DELETE, ALTER, EXECUTE`) and combine it with this flag.
 
 ## Usage
 
@@ -271,7 +286,7 @@ git add dist
 ## Security Notes
 
 - Never commit real credentials or `.env` files.
-- Prefer least-privilege SQL users for production use.
+- Prefer least-privilege SQL users for production use. For read-only scenarios, use a `db_datareader` login in addition to `MSSQL_READ_ONLY=true`.
 - For public or untrusted networks, enable encryption (`MSSQL_ENCRYPT=true`) and configure certificates appropriately.
 
 ## Windows Authentication (Integrated Security)

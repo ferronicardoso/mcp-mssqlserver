@@ -44,6 +44,54 @@ function getAuthMode(): AuthMode {
   );
 }
 
+// Interpretação estrita: um valor inesperado (ex.: "1", "yes") não pode desativar o modo somente leitura em silêncio.
+function getReadOnly(): boolean {
+  const raw = (process.env.MSSQL_READ_ONLY ?? 'false').toLowerCase();
+  if (raw === 'true' || raw === 'false') {
+    return raw === 'true';
+  }
+  throw new Error(`Valor inválido para MSSQL_READ_ONLY: ${raw}. Valores aceitos: true, false`);
+}
+
+// Palavras-chave que nunca devem aparecer em uma query no modo somente leitura.
+const FORBIDDEN_KEYWORDS = [
+  'INSERT', 'UPDATE', 'DELETE', 'MERGE', 'TRUNCATE',
+  'DROP', 'ALTER', 'CREATE', 'GRANT', 'REVOKE', 'DENY',
+  'EXEC', 'EXECUTE', 'INTO',
+  'BACKUP', 'RESTORE', 'SHUTDOWN', 'RECONFIGURE', 'KILL', 'DBCC', 'BULK',
+  'OPENROWSET', 'OPENQUERY', 'OPENDATASOURCE',
+];
+const FORBIDDEN_PATTERN = new RegExp(`\\b(?:${FORBIDDEN_KEYWORDS.join('|')})\\b|\\bxp_\\w+|\\bsp_\\w+`, 'i');
+
+// Remove comentários, literais de string e identificadores delimitados para que
+// o conteúdo deles não seja confundido com palavras-chave ou separadores.
+function stripSqlNoise(query: string): string {
+  return query
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/--[^\r\n]*/g, ' ')
+    .replace(/'(?:[^']|'')*'/g, "''")
+    .replace(/"(?:[^"]|"")*"/g, '""')
+    .replace(/\[(?:[^\]]|\]\])*\]/g, '[]');
+}
+
+// Defesa em profundidade: a garantia efetiva de somente leitura é a permissão do login no banco.
+function assertReadOnlyQuery(query: string): void {
+  const cleaned = stripSqlNoise(query).trim().replace(/;+\s*$/, '');
+
+  if (!/^(?:SELECT|WITH)\b/i.test(cleaned)) {
+    throw new Error('Modo somente leitura (MSSQL_READ_ONLY=true): apenas consultas SELECT são permitidas.');
+  }
+  if (cleaned.includes(';')) {
+    throw new Error('Modo somente leitura (MSSQL_READ_ONLY=true): múltiplos statements não são permitidos.');
+  }
+  const forbidden = FORBIDDEN_PATTERN.exec(cleaned);
+  if (forbidden) {
+    throw new Error(
+      `Modo somente leitura (MSSQL_READ_ONLY=true): construção não permitida na query: ${forbidden[0].toUpperCase()}`
+    );
+  }
+}
+
 async function getSqlClient(authMode: AuthMode): Promise<SqlClient> {
   if (authMode === 'windows') {
     const module = (await import('mssql/msnodesqlv8.js')) as { default?: SqlClient };
@@ -52,7 +100,7 @@ async function getSqlClient(authMode: AuthMode): Promise<SqlClient> {
   return sql;
 }
 
-function createDbConfig(authMode: AuthMode): sql.config {
+function createDbConfig(authMode: AuthMode, readOnly: boolean): sql.config {
   const encrypt = process.env.MSSQL_ENCRYPT === 'true';
   const trustServerCertificate = process.env.MSSQL_TRUST_SERVER_CERTIFICATE !== 'false';
   const host = process.env.MSSQL_HOST ?? 'localhost';
@@ -66,6 +114,7 @@ function createDbConfig(authMode: AuthMode): sql.config {
     options: {
       encrypt,
       trustServerCertificate,
+      readOnlyIntent: readOnly,
     },
     pool: {
       max: 5,
@@ -77,7 +126,9 @@ function createDbConfig(authMode: AuthMode): sql.config {
     config.driver = 'msnodesqlv8';
     (config as sql.config & { connectionString?: string }).connectionString = `Driver={ODBC Driver 18 for SQL Server};Server=${host},${port};Database=${database};Trusted_Connection=yes;Encrypt=${
       encrypt ? 'yes' : 'no'
-    };TrustServerCertificate=${trustServerCertificate ? 'yes' : 'no'};`;
+    };TrustServerCertificate=${trustServerCertificate ? 'yes' : 'no'};${
+      readOnly ? 'ApplicationIntent=ReadOnly;' : ''
+    }`;
   } else {
     config.user = requireEnv('MSSQL_USER');
     config.password = requireEnv('MSSQL_PASSWORD');
@@ -88,7 +139,8 @@ function createDbConfig(authMode: AuthMode): sql.config {
 
 const authMode = getAuthMode();
 let sqlClient: SqlClient | null = null;
-const dbConfig: sql.config = createDbConfig(authMode);
+const readOnly = getReadOnly();
+const dbConfig: sql.config = createDbConfig(authMode, readOnly);
 
 let pool: sql.ConnectionPool | null = null;
 
@@ -136,8 +188,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: 'execute_query',
-      description:
-        'Executa uma query SQL no SQL Server e retorna os resultados. Use para SELECT, INSERT, UPDATE e DELETE.',
+      description: readOnly
+        ? 'Executa uma query SELECT no SQL Server e retorna os resultados. O servidor está em modo somente leitura: INSERT, UPDATE, DELETE, DDL e EXEC são rejeitados.'
+        : 'Executa uma query SQL no SQL Server e retorna os resultados. Use para SELECT, INSERT, UPDATE e DELETE.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -242,7 +295,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     switch (name) {
       case 'execute_query': {
         const query = args?.query as string;
-        const result = await pool.request().query(query);
+        let result: sql.IResult<unknown>;
+        if (readOnly) {
+          assertReadOnlyQuery(query);
+          // Executa em transação sempre revertida, como segunda barreira.
+          const transaction = new client.Transaction(pool);
+          await transaction.begin();
+          try {
+            result = await transaction.request().query(query);
+          } finally {
+            await transaction.rollback();
+          }
+        } else {
+          result = await pool.request().query(query);
+        }
         const output =
           result.recordset?.length > 0
             ? JSON.stringify(result.recordset, null, 2)
